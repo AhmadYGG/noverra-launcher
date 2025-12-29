@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Noverra Launcher</string>
+    <string name="title_home">Home</string>
+    <string name="title_stats">Stats</string>
+    <string name="title_settings">Settings</string>
+    <string name="status_checking">Checking SA-MP installation…</string>
+    <string name="status_not_installed">SA-MP not installed</string>
+    <string name="status_ready">Ready to launch</string>
+    <string name="btn_download">Download / Update</string>
+    <string name="btn_start">Start Game</string>
+    <string name="hint_player_name">Player Name</string>
+    <string name="error_invalid_name">Please enter a valid name</string>
+    <string name="server_online">Online</string>
+    <string name="server_offline">Offline</string>
+    <string name="info_not_installed">SA-MP Client is not installed. Please download it to play.</string>
+    <string name="status_downloading_config">Fetching config...</string>
+    <string name="status_downloading_apk">Downloading APK...</string>
+    <string name="status_installing">Installing...</string>
+    <string name="btn_save">Save Name</string>
+    <string name="msg_name_saved">Player Name Saved</string>
+</resources>

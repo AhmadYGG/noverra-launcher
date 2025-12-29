@@ -1,0 +1,30 @@
+[
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/layout_fragment_settings.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_settings.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/layout_activity_main.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/menu_bottom_nav_menu.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/menu/bottom_nav_menu.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/xml_provider_paths.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/xml/provider_paths.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/layout_fragment_home.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_home.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/layout_fragment_stats.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_stats.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-debug-47:/navigation_mobile_navigation.xml.flat",
+        "source": "com.noverra.launcher.app-main-49:/navigation/mobile_navigation.xml"
+    }
+]

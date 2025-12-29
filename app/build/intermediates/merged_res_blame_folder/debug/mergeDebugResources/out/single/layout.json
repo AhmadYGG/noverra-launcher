@@ -1,0 +1,18 @@
+[
+    {
+        "merged": "com.noverra.launcher.app-mergeDebugResources-46:/layout/fragment_home.xml",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_home.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-mergeDebugResources-46:/layout/fragment_stats.xml",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_stats.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-mergeDebugResources-46:/layout/activity_main.xml",
+        "source": "com.noverra.launcher.app-main-49:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.noverra.launcher.app-mergeDebugResources-46:/layout/fragment_settings.xml",
+        "source": "com.noverra.launcher.app-main-49:/layout/fragment_settings.xml"
+    }
+]
