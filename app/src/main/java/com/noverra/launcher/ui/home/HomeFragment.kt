@@ -22,8 +22,12 @@ import com.noverra.launcher.data.GameRepository
 import com.noverra.launcher.data.model.ClientConfig
 import com.noverra.launcher.data.model.FileEntry
 import com.noverra.launcher.databinding.FragmentHomeBinding
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import com.noverra.launcher.util.SAMPManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -80,6 +84,14 @@ class HomeFragment : Fragment() {
                 binding.btnAction.setOnClickListener { requestStoragePermission() }
                 return
             }
+        } else {
+             // For Android 10 and below
+             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                 updateUI(false, false, "Grant Storage Permission to Check Files")
+                 binding.btnAction.text = "Grant Permission"
+                 binding.btnAction.setOnClickListener { requestStoragePermission() }
+                 return
+             }
         }
         
         // Reset Listener
@@ -196,6 +208,9 @@ class HomeFragment : Fragment() {
                  intent.action = Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
                  startActivityForResult(intent, 2296)
             }
+        } else {
+            // Android 10 and below
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE), 2296)
         }
     }
 
@@ -247,31 +262,73 @@ class HomeFragment : Fragment() {
             val (_, missing) = GameIntegrityManager.checkIntegrity(files)
             if (missing.isEmpty()) {
                 isCacheReady = true
-                checkStatus() // Refresh UI
+                checkStatus()
                 return@launch
             }
-            
-            binding.textStatus.text = "Downloading resources... (0/${missing.size})"
-            
+
+            // Show progress UI
+            binding.progressBar.visibility = View.VISIBLE
+            binding.progressBar.max = 100
+            binding.progressBar.progress = 0
+
             var downloaded = 0
-            for (entry in missing) {
-                 binding.textInfo.text = "Downloading: ${entry.name}"
-                 val success = GameIntegrityManager.downloadFile(entry) { progress ->
-                     // Optional: Update progress bar for current file
-                     // binding.progressBar.progress = (progress * 100).toInt()
-                 }
-                 if (success) {
-                     downloaded++
-                 }
-                 binding.textStatus.text = "Downloading resources... ($downloaded/${missing.size})"
-            }
+            var failed = 0
+            val maxRetries = 3
             
-            if (downloaded == missing.size) {
-                 isCacheReady = true
-                 checkStatus()
+            for ((index, entry) in missing.withIndex()) {
+                if (isDetached) return@launch
+                
+                binding.textInfo.text = "Downloading: ${entry.name}"
+                binding.progressBar.progress = 0
+
+                var retryCount = 0
+                var success = false
+                
+                // Retry logic untuk setiap file
+                while (retryCount < maxRetries && !success) {
+                    success = withContext(Dispatchers.IO) {
+                        GameIntegrityManager.downloadFile(entry) { progress ->
+                            lifecycleScope.launch(Dispatchers.Main) {
+                                val percent = (progress * 100).toInt()
+                                binding.progressBar.progress = percent
+                            }
+                        }
+                    }
+                    
+                    if (!success) {
+                        retryCount++
+                        if (retryCount < maxRetries) {
+                            binding.textInfo.text = "Retrying: ${entry.name} (Attempt $retryCount/$maxRetries)"
+                            // Wait sebelum retry
+                            delay(1000)
+                        }
+                    }
+                }
+                
+                if (success) {
+                    downloaded++
+                } else {
+                    failed++
+                }
+                
+                // Update status setelah setiap file selesai
+                binding.textStatus.text = "Downloading resources... ($downloaded/${missing.size})"
+            }
+
+            // Hide progress UI
+            binding.progressBar.visibility = View.GONE
+
+            if (failed == 0) {
+                isCacheReady = true
+                checkStatus()
+                Toast.makeText(requireContext(), "All files downloaded successfully!", Toast.LENGTH_SHORT).show()
             } else {
-                 resetUIState()
-                 Toast.makeText(context, "Some files failed to download. Retrying...", Toast.LENGTH_SHORT).show()
+                resetUIState()
+                Toast.makeText(
+                    requireContext(), 
+                    "Download completed with errors: $downloaded/${missing.size} files. Failed: $failed",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
