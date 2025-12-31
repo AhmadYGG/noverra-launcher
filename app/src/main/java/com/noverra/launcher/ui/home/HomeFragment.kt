@@ -1,40 +1,46 @@
 package com.noverra.launcher.ui.home
 
-import android.app.AlertDialog
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.noverra.launcher.R
+import com.noverra.launcher.data.DownloadManager
 import com.noverra.launcher.data.GameIntegrityManager
 import com.noverra.launcher.data.GameRepository
 import com.noverra.launcher.data.model.ClientConfig
 import com.noverra.launcher.data.model.FileEntry
 import com.noverra.launcher.databinding.FragmentHomeBinding
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
 import com.noverra.launcher.util.SAMPManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
 
 class HomeFragment : Fragment() {
 
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
+    
+    private val TAG = "HomeFragment"
 
     // Hardcoded Server
     private val SERVER_IP = "192.168.111.168"
@@ -44,6 +50,23 @@ class HomeFragment : Fragment() {
     private var isApkInstalled = false
     private var isCacheReady = false
     private var clientConfig: ClientConfig? = null
+    private var gpuDetected = false
+    
+    // Helper untuk safe UI update - return true jika binding masih valid
+    private fun isBindingValid(): Boolean {
+        return _binding != null && !isDetached && isAdded && view != null
+    }
+    
+    // Safe update UI - hanya update jika binding valid
+    private fun safeUpdateUI(action: () -> Unit) {
+        if (isBindingValid()) {
+            try {
+                action()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating UI: ${e.message}")
+            }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -56,16 +79,147 @@ class HomeFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        // Initialize GameIntegrityManager dengan context
+        GameIntegrityManager.initialize(requireContext())
+        
+        // Setup download callbacks
+        setupDownloadCallbacks()
+        
+        // Detect GPU type (sama seperti NoverraLauncher)
+        detectGpuType()
+        
         setupListeners()
+        
+        // Check if download is in progress (e.g., user came back to this tab)
+        if (DownloadManager.isDownloading) {
+            showDownloadingUI()
+        }
     }
-
-    override fun onResume() {
-        super.onResume()
-        checkStatus()
+    
+    private fun setupDownloadCallbacks() {
+        // Set callbacks untuk DownloadManager
+        DownloadManager.onProgressUpdate = { progress ->
+            safeUpdateUI {
+                binding.progressBar.visibility = View.VISIBLE
+                binding.progressBar.max = 100
+                binding.progressBar.progress = progress.fileProgress
+                binding.textInfo.text = "Downloading: ${progress.currentFile}\n${progress.completedFiles + progress.failedFiles + 1}/${progress.totalFiles}"
+                binding.textStatus.text = "Downloading... Success: ${progress.completedFiles}, Failed: ${progress.failedFiles}"
+                binding.btnAction.isEnabled = false
+            }
+        }
+        
+        DownloadManager.onDownloadComplete = { result ->
+            safeUpdateUI {
+                binding.progressBar.visibility = View.GONE
+                binding.btnAction.isEnabled = true
+                
+                if (result.success) {
+                    isCacheReady = true
+                    checkStatus()
+                    context?.let {
+                        Toast.makeText(it, "All ${result.downloadedFiles} files downloaded!", Toast.LENGTH_SHORT).show()
+                    }
+                } else if (result.totalFiles == 0 && result.failedFiles == 0) {
+                    // No files to download
+                    isCacheReady = true
+                    checkStatus()
+                } else {
+                    checkStatus()
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            "Download: ${result.downloadedFiles}/${result.totalFiles} success, ${result.failedFiles} failed",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    // Log failed files
+                    if (result.failedFilesList.isNotEmpty()) {
+                        Log.e(TAG, "=== FAILED FILES ===")
+                        result.failedFilesList.forEach { Log.e(TAG, it) }
+                        Log.e(TAG, "===================")
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun showDownloadingUI() {
+        safeUpdateUI {
+            binding.progressBar.visibility = View.VISIBLE
+            binding.btnAction.isEnabled = false
+            binding.textStatus.text = "Download in progress..."
+            
+            // Restore progress if available
+            DownloadManager.downloadProgress?.let { progress ->
+                binding.progressBar.progress = progress.fileProgress
+                binding.textInfo.text = "Downloading: ${progress.currentFile}"
+            }
+        }
+    }
+    
+    /**
+     * Detect GPU type sama seperti NoverraLauncher menggunakan GLSurfaceView
+     */
+    private fun detectGpuType() {
+        try {
+            // Buat GLSurfaceView sementara untuk detect GPU
+            val glView = GLSurfaceView(requireContext())
+            glView.setRenderer(object : GLSurfaceView.Renderer {
+                override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+                    gl?.let {
+                        val extensions = it.glGetString(GL10.GL_EXTENSIONS) ?: ""
+                        Log.d(TAG, "GPU Extensions: $extensions")
+                        
+                        GameIntegrityManager.currentGpuType = when {
+                            extensions.contains("GL_IMG_texture_compression_pvrtc") -> {
+                                Log.d(TAG, "GPU Type: PVR")
+                                GameIntegrityManager.GPU_TYPE_PVR
+                            }
+                            extensions.contains("GL_EXT_texture_compression_dxt1") ||
+                            extensions.contains("GL_EXT_texture_compression_s3tc") ||
+                            extensions.contains("GL_AMD_compressed_ATC_texture") -> {
+                                Log.d(TAG, "GPU Type: DXT")
+                                GameIntegrityManager.GPU_TYPE_DXT
+                            }
+                            else -> {
+                                Log.d(TAG, "GPU Type: ETC (default)")
+                                GameIntegrityManager.GPU_TYPE_ETC
+                            }
+                        }
+                        gpuDetected = true
+                    }
+                }
+                
+                override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {}
+                override fun onDrawFrame(gl: GL10?) {}
+            })
+            
+            // Add ke view hierarchy sementara untuk trigger detection
+            val container = FrameLayout(requireContext())
+            container.addView(glView, 1, 1)
+            (binding.root as? ViewGroup)?.addView(container, 0, 0)
+            
+            // Remove setelah beberapa saat
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    (binding.root as? ViewGroup)?.removeView(container)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error removing GL view: ${e.message}")
+                }
+            }, 500)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "GPU detection failed: ${e.message}", e)
+            // Default ke ETC jika gagal
+            GameIntegrityManager.currentGpuType = GameIntegrityManager.GPU_TYPE_ETC
+            gpuDetected = true
+        }
     }
 
     private fun checkStatus() {
-        if (isDetached || context == null) return
+        if (!isBindingValid() || context == null) return
         
         // Check APK
         isApkInstalled = SAMPManager.isInstalled(requireContext())
@@ -102,15 +256,16 @@ class HomeFragment : Fragment() {
         if (clientConfig == null) {
             binding.textStatus.text = "Checking versions..."
             GameRepository.fetchConfig { result ->
-                if (isDetached) return@fetchConfig
-                requireActivity().runOnUiThread {
+                if (!isBindingValid()) return@fetchConfig
+                activity?.runOnUiThread {
+                    if (!isBindingValid()) return@runOnUiThread
                     result.fold(
                         onSuccess = { 
                             clientConfig = it
                             checkFilesIntegrity(it)
                         },
                         onFailure = { 
-                            binding.textStatus.text = "Check Failed" 
+                            safeUpdateUI { binding.textStatus.text = "Check Failed" }
                         }
                     )
                 }
@@ -121,22 +276,25 @@ class HomeFragment : Fragment() {
     }
     
     private fun checkFilesIntegrity(config: ClientConfig) {
+        if (!isBindingValid()) return
+        
         binding.textStatus.text = "Checking integrity..."
         GameRepository.fetchFileList(config.urlCacheFiles) { result ->
-            if (isDetached) return@fetchFileList
-            requireActivity().runOnUiThread {
+            if (!isBindingValid()) return@fetchFileList
+            activity?.runOnUiThread {
+                if (!isBindingValid()) return@runOnUiThread
                 result.fold(
                     onSuccess = { files ->
-                        lifecycleScope.launch {
+                        viewLifecycleOwner.lifecycleScope.launch {
                             val (correct, missing) = GameIntegrityManager.checkIntegrity(files)
                             isCacheReady = missing.isEmpty()
                             
                             val statusMsg = if (isCacheReady) getString(R.string.status_ready) else "Resource Update Required (${missing.size} files)"
-                            updateUI(isApkInstalled, isCacheReady, statusMsg)
+                            safeUpdateUI { updateUI(isApkInstalled, isCacheReady, statusMsg) }
                         }
                     },
                     onFailure = {
-                         binding.textStatus.text = "Failed to file list"
+                        safeUpdateUI { binding.textStatus.text = "Failed to file list" }
                     }
                 )
             }
@@ -144,24 +302,26 @@ class HomeFragment : Fragment() {
     }
 
     private fun updateUI(apkInstalled: Boolean, cacheReady: Boolean, msg: String) {
-         binding.textStatus.text = msg
+        if (!isBindingValid()) return
+        
+        binding.textStatus.text = msg
          
-         if (apkInstalled && cacheReady) {
-             binding.btnAction.text = getString(R.string.btn_start)
-             binding.btnAction.isEnabled = true
-             binding.textInfo.visibility = View.GONE
-         } else {
-             binding.btnAction.text = if (!apkInstalled) getString(R.string.btn_download) else "Update Data"
-             binding.btnAction.isEnabled = true
-             binding.textInfo.visibility = View.VISIBLE
+        if (apkInstalled && cacheReady) {
+            binding.btnAction.text = getString(R.string.btn_start)
+            binding.btnAction.isEnabled = true
+            binding.textInfo.visibility = View.GONE
+        } else {
+            binding.btnAction.text = if (!apkInstalled) getString(R.string.btn_download) else "Update Data"
+            binding.btnAction.isEnabled = true
+            binding.textInfo.visibility = View.VISIBLE
              
-             if (!apkInstalled) {
-                 binding.textInfo.text = getString(R.string.info_not_installed)
-             } else {
-                 binding.textInfo.text = "Game Data Missing/Outdated"
-             }
-         }
-         binding.progressBar.visibility = View.GONE
+            if (!apkInstalled) {
+                binding.textInfo.text = getString(R.string.info_not_installed)
+            } else {
+                binding.textInfo.text = "Game Data Missing/Outdated"
+            }
+        }
+        binding.progressBar.visibility = View.GONE
     }
 
     private fun setupListeners() {
@@ -215,24 +375,29 @@ class HomeFragment : Fragment() {
     }
 
     private fun startDownloadProcess() {
+        if (!isBindingValid()) return
+        
         binding.progressBar.visibility = View.VISIBLE
         binding.btnAction.isEnabled = false
         
         GameRepository.fetchConfig { result ->
-            if (isDetached) return@fetchConfig
-            requireActivity().runOnUiThread {
+            if (!isBindingValid()) return@fetchConfig
+            activity?.runOnUiThread {
+                if (!isBindingValid()) return@runOnUiThread
                 result.fold(
                     onSuccess = { config ->
                         clientConfig = config
-                         if (!isApkInstalled) {
-                             downloadApk(config.urlLauncher)
-                         } else {
-                             fetchAndDownloadFiles(config.urlCacheFiles)
-                         }
+                        if (!isApkInstalled) {
+                            downloadApk(config.urlLauncher)
+                        } else {
+                            fetchAndDownloadFiles(config.urlCacheFiles)
+                        }
                     },
                     onFailure = { e ->
                         resetUIState()
-                        Toast.makeText(activity, "Failed to fetch config: ${e.message}", Toast.LENGTH_SHORT).show()
+                        context?.let {
+                            Toast.makeText(it, "Failed to fetch config: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -240,100 +405,51 @@ class HomeFragment : Fragment() {
     }
     
     private fun fetchAndDownloadFiles(url: String) {
-         binding.textStatus.text = "Fetching file list..."
-         GameRepository.fetchFileList(url) { result ->
-            if (isDetached) return@fetchFileList
-            requireActivity().runOnUiThread {
-               result.fold(
-                   onSuccess = { files ->
+        if (!isBindingValid()) return
+        
+        binding.textStatus.text = "Fetching file list..."
+        GameRepository.fetchFileList(url) { result ->
+            if (!isBindingValid()) return@fetchFileList
+            activity?.runOnUiThread {
+                if (!isBindingValid()) return@runOnUiThread
+                result.fold(
+                    onSuccess = { files ->
                         downloadMissingFiles(files)
-                   },
-                   onFailure = {
-                       resetUIState()
-                       Toast.makeText(activity, "Failed fetch file list", Toast.LENGTH_SHORT).show()
-                   }
-               )
-            }
-         }
-    }
-    
-    private fun downloadMissingFiles(files: List<FileEntry>) {
-        lifecycleScope.launch {
-            val (_, missing) = GameIntegrityManager.checkIntegrity(files)
-            if (missing.isEmpty()) {
-                isCacheReady = true
-                checkStatus()
-                return@launch
-            }
-
-            // Show progress UI
-            binding.progressBar.visibility = View.VISIBLE
-            binding.progressBar.max = 100
-            binding.progressBar.progress = 0
-
-            var downloaded = 0
-            var failed = 0
-            val maxRetries = 3
-            
-            for ((index, entry) in missing.withIndex()) {
-                if (isDetached) return@launch
-                
-                binding.textInfo.text = "Downloading: ${entry.name}"
-                binding.progressBar.progress = 0
-
-                var retryCount = 0
-                var success = false
-                
-                // Retry logic untuk setiap file
-                while (retryCount < maxRetries && !success) {
-                    success = withContext(Dispatchers.IO) {
-                        GameIntegrityManager.downloadFile(entry) { progress ->
-                            lifecycleScope.launch(Dispatchers.Main) {
-                                val percent = (progress * 100).toInt()
-                                binding.progressBar.progress = percent
-                            }
+                    },
+                    onFailure = {
+                        resetUIState()
+                        context?.let {
+                            Toast.makeText(it, "Failed fetch file list", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    
-                    if (!success) {
-                        retryCount++
-                        if (retryCount < maxRetries) {
-                            binding.textInfo.text = "Retrying: ${entry.name} (Attempt $retryCount/$maxRetries)"
-                            // Wait sebelum retry
-                            delay(1000)
-                        }
-                    }
-                }
-                
-                if (success) {
-                    downloaded++
-                } else {
-                    failed++
-                }
-                
-                // Update status setelah setiap file selesai
-                binding.textStatus.text = "Downloading resources... ($downloaded/${missing.size})"
-            }
-
-            // Hide progress UI
-            binding.progressBar.visibility = View.GONE
-
-            if (failed == 0) {
-                isCacheReady = true
-                checkStatus()
-                Toast.makeText(requireContext(), "All files downloaded successfully!", Toast.LENGTH_SHORT).show()
-            } else {
-                resetUIState()
-                Toast.makeText(
-                    requireContext(), 
-                    "Download completed with errors: $downloaded/${missing.size} files. Failed: $failed",
-                    Toast.LENGTH_LONG
-                ).show()
+                )
             }
         }
     }
+    
+    private fun downloadMissingFiles(files: List<FileEntry>) {
+        if (DownloadManager.isDownloading) {
+            Log.w(TAG, "Download already in progress")
+            Toast.makeText(context, "Download already in progress", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Show initial UI
+        safeUpdateUI {
+            binding.progressBar.visibility = View.VISIBLE
+            binding.progressBar.max = 100
+            binding.progressBar.progress = 0
+            binding.btnAction.isEnabled = false
+            binding.textStatus.text = "Starting download..."
+        }
+        
+        // Start download using DownloadManager (runs in GlobalScope)
+        DownloadManager.startDownload(files)
+    }
 
     private fun downloadApk(url: String) {
+        if (!isBindingValid()) return
+        
         binding.textStatus.text = getString(R.string.status_downloading_apk)
         val request = android.app.DownloadManager.Request(Uri.parse(url))
             .setTitle("Noverra Launcher Update")
@@ -348,19 +464,25 @@ class HomeFragment : Fragment() {
             Toast.makeText(requireContext(), "Download started. Please install APK once finished.", Toast.LENGTH_LONG).show()
             
             // Wait for user to install
-            binding.btnAction.isEnabled = true
-            binding.progressBar.visibility = View.GONE
-            binding.textStatus.text = "Waiting for installation..."
-            binding.btnAction.text = "Check Install"
-            binding.btnAction.setOnClickListener { checkStatus() }
+            safeUpdateUI {
+                binding.btnAction.isEnabled = true
+                binding.progressBar.visibility = View.GONE
+                binding.textStatus.text = "Waiting for installation..."
+                binding.btnAction.text = "Check Install"
+                binding.btnAction.setOnClickListener { checkStatus() }
+            }
             
         } catch (e: Exception) {
-             Toast.makeText(requireContext(), "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
-             resetUIState()
+            context?.let {
+                Toast.makeText(it, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+            resetUIState()
         }
     }
     
     private fun resetUIState() {
+        if (!isBindingValid()) return
+        
         binding.progressBar.visibility = View.GONE
         binding.btnAction.isEnabled = true
         checkStatus()
@@ -377,6 +499,21 @@ class HomeFragment : Fragment() {
     
     override fun onDestroyView() {
         super.onDestroyView()
+        // Don't clear DownloadManager callbacks here - download should continue
+        // Callbacks will be re-set when fragment view is recreated
         _binding = null
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Re-setup callbacks when returning to this fragment
+        setupDownloadCallbacks()
+        
+        // If download is in progress, show the UI
+        if (DownloadManager.isDownloading) {
+            showDownloadingUI()
+        } else {
+            checkStatus()
+        }
     }
 }

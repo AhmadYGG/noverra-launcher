@@ -20,8 +20,8 @@ class StatsFragment : Fragment() {
     private var _binding: FragmentStatsBinding? = null
     private val binding get() = _binding!!
 
-    private val SERVER_IP = "192.168.111.168"
-    private val SERVER_PORT = 13146
+    private val SERVER_IP = "74.63.203.196"
+    private val SERVER_PORT = 7777
 
     override fun onCreateView(
         inflater: LayoutInflater,
